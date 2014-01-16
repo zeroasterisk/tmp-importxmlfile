@@ -1,0 +1,33 @@
+﻿Background:
+     A few companies (RJ Reynolds, Dealer Car Search, etc.) are aggregates of all dealer listings nationwide.  These services provide xml listings of dealer inventories to websites such as autoz4sell.com, autotrader.com, cars.com, etc.  Both websites charge the dealer for services (i.e. AutoTrader.com charges dealer monthly fee to have all inventory listed on website, while RJ Reynolds charges autotrader.com for the software to make this possible).
+
+
+Issue:
+     Autoz4sell.com needs to be able to import the feed from Dealer Car Search (flat file or XML) into the sites' MySQL database.  Site owner has tried to use the built-in import within the software but reports, "It just doesn't work right".  Site owner has also paid someone from a freelance job website to write a program to handle the import, but the import is inconsistent although the source data hasn't changed (e.g. sometimes city is in the wrong field).
+
+
+Software:
+     iAuto worksforweb.com/classifieds-software/iAuto.  Full access to the source code.
+
+
+Scripts of note:
+     /public_html/importxmlfile.php appears to be the script the freelancer wrote
+     /public_html/modules/import_listings/ directory contains the classes for the software's built-in import listings feature
+
+
+Access:
+     FTP access
+     Host website claims SSH access is available, site owner is not familiar enough to know if it is enabled (would require contacting host, but it doesn't seem necessary)
+     cPanel backend administration with phpMyAdmin install.
+     All passwords from site owner are stored
+
+
+Initial Thoughts:
+     - Why does the import script not work as expected?
+     - Why does the freelancers import not work correctly?
+     - The database structure is straightforward, so a custom import would not be difficult, but it should be based off included import classes if possible
+     - Given that XML is still widely used within this industry, for this specific service, it should be strongly considered as the solution
+
+
+Additional Docs:
+     - Sample XML file from Dealer Car Search
