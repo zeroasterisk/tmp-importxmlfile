@@ -55,27 +55,31 @@ class listingsImport {
     private function mapListing($listing) {
         $returnListing = array
         (
+            /** values we don't need to mess with **/
             //'sid' => '',
-            'category_sid' => 4, // @see table classifieds_categories
-            'user_sid' => 223, // @see table users_users @todo may need to be dynamic in future
-            'active' => 1,
-            'moderation_status' => 'APPROVED',
-            'keywords' => $this->getListingInfo($listing, 'keywords'),
+            //'last_user_ip' => '',
             //'views' => '',
-            'pictures' => $this->getListingInfo($listing, 'picturesCount'),
-            'activation_date' => date("Y-m-d H:i:s"),
-            'expiration_date' => '',
-            'first_activation_date' => '', // @todo this could cause mess with update; review
-            //'last_user_ip' => '', //defaults to NULL
             //'feature_featured' => '',
             //'featured_last_showed' => '',
             //'feature_highlighted' => '',
             //'feature_slideshow' => '',
             //'feature_sponsored' => '',
             //'feature_youtube' => '',
-            'feature_youtube_video_id' => $this->getListingInfo($listing, 'youtubeVideoID'),
             //'facebook_repost_status' => '',
             //'twitter_repost_status' => '',
+
+            'category_sid' => 4, // @see table classifieds_categories
+            'user_sid' => 223, // @see table users_users @todo may need to be dynamic in future
+            'active' => 1,
+            'moderation_status' => 'APPROVED',
+            'activation_date' => date("Y-m-d H:i:s"),
+            'expiration_date' => '',
+            'first_activation_date' => '', // @todo this could cause mess with update; review  
+
+
+            'feature_youtube_video_id' => $this->getListingInfo($listing, 'youtubeVideoID'),
+            'keywords' => $this->getListingInfo($listing, 'keywords'),
+            'pictures' => $this->getListingInfo($listing, 'picturesCount'),
             'Year' => $this->getListingInfo($listing, 'year'),
             'Mileage' => $this->getListingInfo($listing, 'mileage'),
             'Condition' => $this->getListingInfo($listing, 'condition'),
@@ -101,8 +105,9 @@ class listingsImport {
         //$returnListing += $this->getListingOptions($listing);
     }
 
-    private function getListingInfo($listing) {
+    public function getListingInfo($listing, $field) {
         // this should be overridden by extending class
+        
     }
 
     // @todo - is this necessary/convenient/better?
@@ -163,9 +168,45 @@ class dealerCarSearchListingsImport extends listingsImport {
         parent::__construct();
         // @todo meh, not sure anything else will need to be done here
     }
-    private function getListingInfo($listing) 
-    {
-        
+
+    /**
+     * @todo - maybe this is better broken into individual functions?
+     *  e.g. getListingKeywords in the parent class, then extend just the specific ones
+     *       that don't match up.
+     *       Caveat to this is that we would be assuming fields like Vin would always be 'Vin'
+     * @param  [type] $listing
+     * @param  [type] $field
+     * @return [type]
+     */
+    public function getListingInfo($listing, $field) 
+    {   
+        $return = '';
+        $l = $listing;
+        switch ($field)
+        {
+            case 'picturesCount':
+                $images = explode(',', $l['Images']);
+                $return = count($images);
+            break;
+            case 'youtubeVideoID':
+                $videoURL = $l['Video_x0020_URL'];
+                parse_str(parse_url($videoURL, PHP_URL_QUERY), $video);
+
+                $return = $video['v'];
+            break;
+            case 'keywords':
+                $return = $l['Address1'] . ' ' . 
+                            $l['City'] . ' ' . 
+                            $l['Year'] . ' ' .
+                            $l['Make'] . ' ' .
+                            $l['Model'] . ' ' .
+                            $l['Trim'];
+            break;
+
+
+        }
+
+        return $return;
     }
 
 }
