@@ -16,6 +16,11 @@ class listingsImport {
      */
     private $listingDump;
 
+    /**
+     * The fields as in db table classifieds_listings_field_list
+     * @var array
+     */
+    private $fieldList;
 
     /**
      * Fire it up
@@ -24,6 +29,7 @@ class listingsImport {
     {
         require_once 'conn.php';
         $this->conn = new dbConnection;
+        //$_fieldList = $this->conn->query("SELECT sid, value FROM ") // @todo left off here
     }
 
     /**
@@ -105,7 +111,7 @@ class listingsImport {
         //$returnListing += $this->getListingOptions($listing);
     }
 
-    public function getListingInfo($listing, $field) {
+    protected function getListingInfo($listing, $field) {
         // this should be overridden by extending class
         
     }
@@ -178,12 +184,69 @@ class dealerCarSearchListingsImport extends listingsImport {
      * @param  [type] $field
      * @return [type]
      */
-    public function getListingInfo($listing, $field) 
+    protected function getListingInfo($listing, $field) 
     {   
         $return = '';
         $l = $listing;
         switch ($field)
         {
+            case 'mileage':
+                $return = $l['Mileage'];
+            break;
+            case 'condition':
+                $return = $l[''];
+            break;
+            case 'exteriorColor':
+                $return = $l[''];
+            break;
+            case 'interiorColor':
+                $return = $l[''];
+            break;
+            case 'doors':
+                $return = $l[''];
+            break;
+            case 'engine':
+                $return = $l[''];
+            break;
+            case 'transmission':
+                $return = $l[''];
+            break;
+            case 'vin':
+                $return = $l[''];
+            break;
+            case 'zipCode':
+                $return = $l[''];
+            break;
+            case 'price':
+                $return = $l[''];
+            break;            
+            case 'makeModel':
+                $return = $l[''];
+            break;
+            case 'bodyStyle':
+                $return = $l[''];
+            break;            
+            case 'sellerComments':
+                $return = $l[''];
+            break;
+            case 'address':
+                $return = $l[''];
+            break;
+            case 'city':
+                $return = $l[''];
+            break;
+            case 'state':
+                $return = $l[''];
+            break;
+            case 'sold':
+                $return = $l[''];
+            break;
+            case 'listingRating':
+                $return = $l[''];
+            break;
+            case 'year': 
+                $return = $l['Year'];
+            break;
             case 'picturesCount':
                 $images = explode(',', $l['Images']);
                 $return = count($images);
