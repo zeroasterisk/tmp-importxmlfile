@@ -1,6 +1,13 @@
 <?php
 
 ini_set('xdebug.var_display_max_depth', 10 );
+ini_set('xdebug.var_display_max_children', 10000 );
+
+
+
+/**
+ * How to extend: create a new class extending listingsImport and override the getListing*() methods
+ */
 
 class listingsImport {
     
@@ -28,8 +35,37 @@ class listingsImport {
     public function __construct()
     {
         require_once 'conn.php';
-        $this->conn = new dbConnection;
-        //$_fieldList = $this->conn->query("SELECT sid, value FROM ") // @todo left off here
+        $db = new dbConnection;
+        $this->conn = $db->connection;
+        $this->fieldList = $this->getFieldList();
+
+
+        var_dump($this->fieldList);
+        
+    }
+
+    public function __destruct()
+    {
+        // hmmm, does this release the connection?
+        $this->conn = null;
+    }
+
+    /**
+     * Get list of all fields and store in array for search
+     * @see  classifieds_listings_field_list
+     * @return array of key=>value == sid=>value
+     */
+    private function getFieldList()
+    {
+        $query = $this->conn->prepare("SELECT sid, field_sid, value FROM classifieds_listing_field_list");
+        $query->execute();
+
+        while ($row = $query->fetch(PDO::FETCH_ASSOC)) {
+            $thisKey = $row['sid'] . ':' . $row['field_sid'];
+            $_fieldList[$thisKey] = $row['value'];
+        }
+        
+        return $_fieldList;
     }
 
     /**
@@ -43,10 +79,54 @@ class listingsImport {
         // make it into a nice array
         $this->listingDump = unserialize(serialize(json_decode(json_encode((array) $xml), 1)));
 
-        foreach ($this->listingDump['auto'] as $listing) {
-            $this->listingMap[] = $this->mapListing($listing);
+        $this->listingMap = $this->mapListings($this->listingDump['auto']);        
+
+    }
+
+    private function mapListings($listings)
+    {
+        $return = array();
+        foreach ($listings as $listing) 
+        {
+            $return[] = $this->mapListing($listing);
         }
 
+        return $return;
+    }
+
+    /**
+     * Search all fields from classifieds_listing_field_list
+     * @param  [type] $searchFor
+     * @return [type]
+     */
+    private function searchFieldList($searchFor, $field_sid = null)
+    {   
+
+        $searchFor = preg_quote($searchFor);
+        $return = preg_grep('/' . $searchFor . '/i', $this->fieldList);
+
+        // if nothing is found
+        // for now, return null
+        // @todo logging
+        if (!$return) 
+        {
+            return null;
+        }
+        // if more than one row is returned, the field_sid is the tie breaker
+        if (count($return) > 1)
+        {
+            $keys = array_keys($return);
+            $return = array_search($field_sid, $keys);
+            $return = explode(':', $keys[$return]);
+            return $return[0];
+        }
+        else
+        {
+            $return = array_keys($return);
+            return current($return);
+        }
+
+        return null;
     }
 
     /**
@@ -83,38 +163,173 @@ class listingsImport {
             'first_activation_date' => '', // @todo this could cause mess with update; review  
 
 
-            'feature_youtube_video_id' => $this->getListingInfo($listing, 'youtubeVideoID'),
-            'keywords' => $this->getListingInfo($listing, 'keywords'),
-            'pictures' => $this->getListingInfo($listing, 'picturesCount'),
-            'Year' => $this->getListingInfo($listing, 'year'),
-            'Mileage' => $this->getListingInfo($listing, 'mileage'),
-            'Condition' => $this->getListingInfo($listing, 'condition'),
-            'ExteriorColor' => $this->getListingInfo($listing, 'exteriorColor'),
-            'InteriorColor' => $this->getListingInfo($listing, 'interiorColor'),
-            'Doors' => $this->getListingInfo($listing, 'doors'),
-            'Engine' => $this->getListingInfo($listing, 'engine'),
-            'Transmission' => $this->getListingInfo($listing, 'transmission'),
-            'Vin' => $this->getListingInfo($listing, 'vin'),
-            'ZipCode' => $this->getListingInfo($listing, 'zipCode'),
-            'Price' => $this->getListingInfo($listing, 'price'),            
-            'MakeModel' => $this->getListingInfo($listing, 'makeModel'),
-            'BodyStyle' => $this->getListingInfo($listing, 'bodyStyle'),            
-            'SellerComments' => $this->getListingInfo($listing, 'sellerComments'),
-            'Address' => $this->getListingInfo($listing, 'address'),
-            'City' => $this->getListingInfo($listing, 'city'),
-            'State' => $this->getListingInfo($listing, 'state'),
-            'Sold' => $this->getListingInfo($listing, 'sold'),
-            'ListingRating' => $this->getListingInfo($listing, 'listingRating'),
+            'feature_youtube_video_id' => $this->getListingYoutubeVideoID($listing),
+            'keywords' => $this->getListingKeywords($listing),
+            'pictures' => $this->getListingPicturesCount($listing),
+            'Year' => $this->getListingYear($listing),
+            'Mileage' => $this->getListingMileage($listing),
+            'Condition' => $this->getListingCondition($listing),
+            'ExteriorColor' => $this->getListingExteriorColor($listing),
+            'InteriorColor' => $this->getListingInteriorColor($listing),
+            'Doors' => $this->getListingDoors($listing),
+            'Engine' => $this->getListingEngine($listing),
+            'Transmission' => $this->getListingTransmission($listing),
+            'Vin' => $this->getListingVin($listing),
+            'ZipCode' => $this->getListingZipCode($listing),
+            'Price' => $this->getListingPrice($listing),            
+            'MakeModel' => $this->getListingMakeModel($listing),
+            'BodyStyle' => $this->getListingBodyStyle($listing),            
+            'SellerComments' => $this->getListingSellerComments($listing),
+            'Address' => $this->getListingAddress($listing),
+            'City' => $this->getListingCity($listing),
+            'State' => $this->getListingState($listing),
+            'Sold' => $this->getListingSold($listing),
+            'ListingRating' => $this->getListingListingRating($listing),
         );
 
         // add on the options        
         //$returnListing += $this->getListingOptions($listing);
     }
 
-    protected function getListingInfo($listing, $field) {
-        // this should be overridden by extending class
-        
+    /** 
+     * the getListing*() methods that should be 
+     * overridden for different data sources.
+     * The original methods are based on xml data
+     * from dealercarsearch.com
+     */
+    protected function getListingListingRating($listing)
+    {
+        // no data in dealercarsearch feed
+        return null;
     }
+    protected function getListingSold($listing)
+    {
+        // no data in dealercarsearch feed
+        return null;
+    }
+    protected function getListingState($listing)
+    {
+        return $listing['State'];
+    }
+    protected function getListingCity($listing)
+    {
+        return $listing['City'];
+    }
+    protected function getListingAddress($listing)
+    {
+        $return = empty($listing['Address2']) ? $listing['Address1'] : $listing['Address1'] . ' ' . $listing['Address2'];
+        return $return;
+    }
+    protected function getListingSellerComments($listing)
+    {
+        return $listing['Comments_x0020_And_x0020_Default_x0020_Sellers_x0020_Notes'];
+    }
+    protected function getListingBodyStyle($listing)
+    {
+        $return = $this->searchFieldList($listing['Body_x0020_Type'], 160);
+        //$this->_debug($this->getSID($return), $listing['Body_x0020_Type']);
+        return $this->getSID($return);
+    }
+    /** @todo come back to this **/
+    protected function getListingMakeModel($listing)
+    {
+        $return = $this->searchFieldList($listing['Cylinders']);
+        return $this->getSID($return);
+    }
+    protected function getListingPrice($listing)
+    {
+        return $listing['Retail'];
+    }
+    protected function getListingZipCode($listing)
+    {
+        return $listing['Zip'];
+    }
+    protected function getListingVin($listing)
+    {
+        return $listing['VIN'];
+    }
+    protected function getListingTransmission($listing)
+    {
+        $return = $this->searchFieldList($listing['Transmission_x0020_Type'], 111);
+        return $this->getSID($return);
+    }
+    protected function getListingDoors($listing)
+    {
+        // @todo don't see any doors field in dealercarsearch feed
+        // $return = $this->searchFieldList($listing['Cylinders'] . ' Cylinder');
+        // $this->_debug($return, $listing['Cylinders'] . ' Cylinder');
+        // return $this->getSID($return);
+        return null;
+    }
+    protected function getListingEngine($listing)
+    {
+        $return = $this->searchFieldList($listing['Cylinders'] . ' Cylinder', 110);
+        return $this->getSID($return);
+    }
+    protected function getListingInteriorColor($listing)
+    {
+        $return = $this->searchFieldList($listing['Interior_x0020_Color'], 108);
+        return $this->getSID($return);
+    }
+    protected function getListingExteriorColor($listing)
+    {
+        $return = $this->searchFieldList($listing['Exterior_x0020_Color'], 107);
+        return $this->getSID($return);
+    }
+    protected function getListingCondition($listing)
+    {
+        $return = $this->searchFieldList($listing['New_x0020__x002F__x0020_Used'], 202);
+        return $this->getSID($return);
+    }
+    protected function getListingMileage($listing)
+    {
+        return $listing['Mileage'];
+    }
+    protected function getListingYear($listing)
+    {
+        return $listing['Year'];
+    }
+
+    protected function getListingYoutubeVideoID($listing)
+    {
+        $videoURL = $listing['Video_x0020_URL'];
+        parse_str(parse_url($videoURL, PHP_URL_QUERY), $video);
+        return $video['v'];
+    }
+    protected function getListingKeywords($listing)
+    {
+        return $listing['Address1'] . ' ' . 
+               $listing['City'] . ' ' . 
+               $listing['Year'] . ' ' .
+               $listing['Make'] . ' ' .
+               $listing['Model'] . ' ' .
+               $listing['Trim'];
+    }
+    protected function getListingPicturesCount($listing)
+    {
+        $images = explode(',', $listing['Images']);
+        return count($images);
+    }
+    /**
+     * Retuns the SID part of a value
+     * @param  string $val 123:233
+     * @return int 123
+     */
+    private function getSID($val)
+    {
+        $ex = explode(':', $val);
+        return (int)$ex[0];
+    }
+    private function _debug($value, $item)
+    {
+        print 'Value returned: ' . $value . "\n";
+        print 'Searched for: ' . $item . "\n";
+        die();
+    }
+    // protected function getListingInfo($listing, $field) {
+    //     // this should be overridden by extending class
+        
+    // }
 
     // @todo - is this necessary/convenient/better?
     private function getListingOptions($listing) {
@@ -167,109 +382,15 @@ class listingsImport {
 
 }
 
+/**
+ * This is the default -- in this version no overriding is necessary
+ */
 class dealerCarSearchListingsImport extends listingsImport {
 
     public function __construct() 
     {
         parent::__construct();
         // @todo meh, not sure anything else will need to be done here
-    }
-
-    /**
-     * @todo - maybe this is better broken into individual functions?
-     *  e.g. getListingKeywords in the parent class, then extend just the specific ones
-     *       that don't match up.
-     *       Caveat to this is that we would be assuming fields like Vin would always be 'Vin'
-     * @param  [type] $listing
-     * @param  [type] $field
-     * @return [type]
-     */
-    protected function getListingInfo($listing, $field) 
-    {   
-        $return = '';
-        $l = $listing;
-        switch ($field)
-        {
-            case 'mileage':
-                $return = $l['Mileage'];
-            break;
-            case 'condition':
-                $return = $l[''];
-            break;
-            case 'exteriorColor':
-                $return = $l[''];
-            break;
-            case 'interiorColor':
-                $return = $l[''];
-            break;
-            case 'doors':
-                $return = $l[''];
-            break;
-            case 'engine':
-                $return = $l[''];
-            break;
-            case 'transmission':
-                $return = $l[''];
-            break;
-            case 'vin':
-                $return = $l[''];
-            break;
-            case 'zipCode':
-                $return = $l[''];
-            break;
-            case 'price':
-                $return = $l[''];
-            break;            
-            case 'makeModel':
-                $return = $l[''];
-            break;
-            case 'bodyStyle':
-                $return = $l[''];
-            break;            
-            case 'sellerComments':
-                $return = $l[''];
-            break;
-            case 'address':
-                $return = $l[''];
-            break;
-            case 'city':
-                $return = $l[''];
-            break;
-            case 'state':
-                $return = $l[''];
-            break;
-            case 'sold':
-                $return = $l[''];
-            break;
-            case 'listingRating':
-                $return = $l[''];
-            break;
-            case 'year': 
-                $return = $l['Year'];
-            break;
-            case 'picturesCount':
-                $images = explode(',', $l['Images']);
-                $return = count($images);
-            break;
-            case 'youtubeVideoID':
-                $videoURL = $l['Video_x0020_URL'];
-                parse_str(parse_url($videoURL, PHP_URL_QUERY), $video);
-
-                $return = $video['v'];
-            break;
-            case 'keywords':
-                $return = $l['Address1'] . ' ' . 
-                            $l['City'] . ' ' . 
-                            $l['Year'] . ' ' .
-                            $l['Make'] . ' ' .
-                            $l['Model'] . ' ' .
-                            $l['Trim'];
-            break;
-
-
-        }
-
-        return $return;
     }
 
 }
