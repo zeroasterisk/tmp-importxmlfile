@@ -30,6 +30,10 @@ class listingsImport {
     private $fieldList;
 
     /**
+     * The make model list( from classifieds_listing_field_tree
+     */
+    private $makeAndModelList;
+    /**
      * Fire it up
      */
     public function __construct()
@@ -38,9 +42,7 @@ class listingsImport {
         $db = new dbConnection;
         $this->conn = $db->connection;
         $this->fieldList = $this->getFieldList();
-
-
-        var_dump($this->fieldList);
+        $this->makeAndModelList = $this->getMakeAndModelList();
         
     }
 
@@ -57,6 +59,7 @@ class listingsImport {
      */
     private function getFieldList()
     {
+        $_fieldList = array();
         $query = $this->conn->prepare("SELECT sid, field_sid, value FROM classifieds_listing_field_list");
         $query->execute();
 
@@ -66,6 +69,20 @@ class listingsImport {
         }
         
         return $_fieldList;
+    }
+
+    private function getMakeAndModelList()
+    {
+        $_list = array();
+        $query = $this->conn->prepare("SELECT sid, caption FROM classifieds_listing_field_tree");
+        $query->execute();
+
+        while ($row = $query->fetch(PDO::FETCH_ASSOC)) {
+            $thisKey = $row['sid'];
+            $_list[$thisKey] = $row['caption'];
+        }
+        
+        return $_list;
     }
 
     /**
@@ -99,11 +116,13 @@ class listingsImport {
      * @param  [type] $searchFor
      * @return [type]
      */
-    private function searchFieldList($searchFor, $field_sid = null)
+    private function searchFieldList($searchFor, $field_sid = null, $list = null)
     {   
-
+        if (is_null($list)) {
+            $list = $this->fieldList;
+        }
         $searchFor = preg_quote($searchFor);
-        $return = preg_grep('/' . $searchFor . '/i', $this->fieldList);
+        $return = preg_grep('/' . $searchFor . '/i', $list);
 
         // if nothing is found
         // for now, return null
@@ -227,14 +246,13 @@ class listingsImport {
     protected function getListingBodyStyle($listing)
     {
         $return = $this->searchFieldList($listing['Body_x0020_Type'], 160);
-        //$this->_debug($this->getSID($return), $listing['Body_x0020_Type']);
         return $this->getSID($return);
     }
-    /** @todo come back to this **/
+    
     protected function getListingMakeModel($listing)
     {
-        $return = $this->searchFieldList($listing['Cylinders']);
-        return $this->getSID($return);
+        $return = $this->searchFieldList($listing['Model'], null, $this->makeAndModelList);
+        return $return;
     }
     protected function getListingPrice($listing)
     {
