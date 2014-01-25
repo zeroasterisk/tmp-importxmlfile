@@ -33,6 +33,12 @@ class listingsImport {
      * The make model list( from classifieds_listing_field_tree
      */
     private $makeAndModelList;
+
+    /**
+     * All options that can be stored for a vehivle
+     * @var array
+     */
+    private $allListingOptions = array();
     /**
      * Fire it up
      */
@@ -43,6 +49,7 @@ class listingsImport {
         $this->conn = $db->connection;
         $this->fieldList = $this->getFieldList();
         $this->makeAndModelList = $this->getMakeAndModelList();
+        $this->allListingOptions = $this->getAllListingOptions();
         
     }
 
@@ -127,13 +134,16 @@ class listingsImport {
         // if nothing is found
         // for now, return null
         // @todo logging
+
         if (!$return) 
         {
+            
             return null;
         }
         // if more than one row is returned, the field_sid is the tie breaker
         if (count($return) > 1)
         {
+            
             $keys = array_keys($return);
             $return = array_search($field_sid, $keys);
             $return = explode(':', $keys[$return]);
@@ -141,6 +151,7 @@ class listingsImport {
         }
         else
         {
+            
             $return = array_keys($return);
             return current($return);
         }
@@ -204,10 +215,12 @@ class listingsImport {
             'State' => $this->getListingState($listing),
             'Sold' => $this->getListingSold($listing),
             'ListingRating' => $this->getListingListingRating($listing),
+            'FuelType' => $this->getListingFuelType($listing),
+            'DriveType' => $this->getListingDriveType($listing)
         );
 
         // add on the options        
-        //$returnListing += $this->getListingOptions($listing);
+        $returnListing += $this->getListingOptions($listing);
     }
 
     /** 
@@ -216,6 +229,56 @@ class listingsImport {
      * The original methods are based on xml data
      * from dealercarsearch.com
      */
+    
+    /**
+     * getListingOptions may be complicated with future feeds
+     * dealercarsearch provides it as one string of comma separated values;
+     * others provide it as a key => (boolean) for each one
+     * e.g. 'AirConditiong' => 1, '4x4' => 0
+     *
+     * Update: matter of fact, this would be a pretty complicated
+     * algo to get perfect...will need some human interaction
+     */
+    protected function getListingOptions($listing)
+    {
+        $return = array();
+        $options = array();
+        $options = explode(',', $listing['Options']);
+        $iCount = count($this->allListingOptions);
+        var_dump($options);
+        for ($i = 0; $i < $iCount; $i++)
+        {
+            
+            $thisField = $this->allListingOptions[$i];
+            foreach ($options as $option)
+            {
+                $stripped = preg_replace("/[^a-zA-Z0-9]/", "", $option);
+                $val = $this->searchFieldList($stripped, null, $this->allListingOptions);
+                //print '<br>Searched for: ' . $stripped . '... Got Back: ' . $val . "<br>";
+                if ($stripped == 'AirConditioning')
+                {
+                    var_dump(is_null($val));
+                    var_dump($val);
+                }
+                $return[$thisField] = is_null($val) ? (int)0 : (int)1;
+            }
+            
+            
+            
+        }
+        var_dump($return);
+        die();
+        
+
+    }
+    protected function getListingDriveType($listing)
+    {
+        // @todo
+    }
+    protected function getListingFuelType($listing)
+    {
+        // @todo
+    }
     protected function getListingListingRating($listing)
     {
         // no data in dealercarsearch feed
@@ -350,43 +413,43 @@ class listingsImport {
     // }
 
     // @todo - is this necessary/convenient/better?
-    private function getListingOptions($listing) {
+    private function getAllListingOptions() {
         $return = array(
             // options
-            'AirConditioning' => '',
-            'AlloyWheels' => '',
-            'AmFmRadio' => '',
-            'AmFmStereoTape' => '',
-            'FuelType' => '',
-            'DriveType' => '',
-            'DriverAirBag' => '',
-            'PassengerAirBag' => '',
-            'SideAirBag' => '',
-            'AntiLockBrakes' => '',
-            'PowerSteering' => '',
-            'CruiseControl' => '',
-            'Video' => '',
-            'LeatherSeats' => '',
-            'PowerSeats' => '',
-            'ChildSeat' => '',
-            'TiltWheel' => '',
-            'PowerWindows' => '',
-            'RearWindowDefroster' => '',
-            'PowerDoorLocks' => '',
-            'TintedGlass' => '',
-            'CompactDiscPlayer' => '',
-            'PowerMirrors' => '',
-            'CompactDiscChanger' => '',
-            'SunroofMoonroof' => '',
-            'AutomaticHeadlights' => '',
-            'DaytimeRunningLights' => '',
-            'ElectronicBrakeAssistance' => '',
-            'FogLights' => '',
-            'KeylessEntry' => '',
-            'RemoteIgnition' => '',
-            'SteeringWheelMountedControls' => '',
-            'Navigation' => '',
+            'AirConditioning',
+            'AlloyWheels',
+            'AmFmRadio',
+            'AmFmStereoTape',
+            'DriverAirBag',
+            'PassengerAirBag',
+            'SideAirBag',
+            'AntiLockBrakes',
+            'PowerSteering',
+            'CruiseControl',
+            'Video',
+            'LeatherSeats',
+            'PowerSeats',
+            'ChildSeat',
+            'TiltWheel',
+            'PowerWindows',
+            'RearWindowDefroster',
+            'PowerDoorLocks',
+            'TintedGlass',
+            'CompactDiscPlayer',
+            'PowerMirrors',
+            'CompactDiscChanger',
+            'SunroofMoonroof',
+            'AutomaticHeadlights',
+            'DaytimeRunningLights',
+            'ElectronicBrakeAssistance',
+            'FogLights',
+            'KeylessEntry',
+            'RemoteIgnition',
+            'SteeringWheelMountedControls',
+            'Navigation'
         );
+
+        return $return;
     }
 
     /**
