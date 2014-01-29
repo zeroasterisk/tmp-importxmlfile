@@ -35,10 +35,10 @@ class listingsImport {
     private $makeAndModelList;
 
     /**
-     * All options that can be stored for a vehivle
+     * All options that can be stored for a vehicle
      * @var array
      */
-    private $allListingOptions = array();
+    //private $allListingOptions = array();
     /**
      * Fire it up
      */
@@ -49,7 +49,7 @@ class listingsImport {
         $this->conn = $db->connection;
         $this->fieldList = $this->getFieldList();
         $this->makeAndModelList = $this->getMakeAndModelList();
-        $this->allListingOptions = $this->getAllListingOptions();
+        //$this->allListingOptions = $this->getAllListingOptions();
         
     }
 
@@ -103,8 +103,101 @@ class listingsImport {
         // make it into a nice array
         $this->listingDump = unserialize(serialize(json_decode(json_encode((array) $xml), 1)));
 
-        $this->listingMap = $this->mapListings($this->listingDump['auto']);        
+        $this->listingMap = $this->mapListings($this->listingDump['auto']);      
 
+        $this->listingsCreateUpdateDelete();
+        var_dump($this->listingMap);
+
+
+    }
+
+    private function listingsCreateUpdateDelete()
+    {
+        $currentListings = $this->getCurrentDealerListings();
+        // if the VIN and sid (user id) isn't in db, create the listing
+        $create = array();
+        // if the VIN and sid is in db, update the listing (maybe update if different)
+        $update = array();
+        // if the VIN and sid is in db, but not in listingMap, delete from DB
+        $delete = array();
+        $currentListings = getCurrentDealerListings();
+        foreach ($this->listingMap as $listing) {
+            
+        }
+    }
+
+    private function getCurrentDealerListings()
+    {
+        $sid = $this->getListingUserID(null);
+        $query = $this->conn->prepare("SELECT sid, user_id, Vin FROM classifieds_listings");
+        $query->execute();
+
+        while ($row = $query->fetch(PDO::FETCH_ASSOC)) {
+            $results[] = $row;
+        }
+
+        return $results;
+        $getFields = array(
+            'sid',
+            'user_sid',
+            'keywords',
+            'views',
+            'pictures',
+            'feature_youtube_video_id',
+            'AirConditioning',
+            'AlloyWheels',
+            'AmFmRadio',
+            'AmFmStereoTape',
+            'ZipCode',
+            'Price',
+            'Year',
+            'Mileage',
+            'Condition',
+            'Vin',
+            'ExteriorColor',
+            'InteriorColor',
+            'Doors',
+            'Engine',
+            'Transmission',
+            'FuelType',
+            'DriveType',
+            'DriverAirBag',
+            'PassengerAirBag',
+            'SideAirBag',
+            'AntiLockBrakes',
+            'PowerSteering',
+            'CruiseControl',
+            'Video',
+            'MakeModel',
+            'BodyStyle',
+            'LeatherSeats',
+            'PowerSeats',
+            'ChildSeat',
+            'TiltWheel',
+            'PowerWindows',
+            'RearWindowDefroster',
+            'PowerDoorLocks',
+            'TintedGlass',
+            'CompactDiscPlayer',
+            'PowerMirrors',
+            'CompactDiscChanger',
+            'SunroofMoonroof',
+            'SellerComments',
+            'Address',
+            'City',
+            'State',
+            'Sold',
+            'ListingRating',
+            'AutomaticHeadlights',
+            'DaytimeRunningLights',
+            'ElectronicBrakeAssistance',
+            'FogLights',
+            'KeylessEntry',
+            'RemoteIgnition',
+            'SteeringWheelMountedControls',
+            'Navigation'
+        );
+        
     }
 
     private function mapListings($listings)
@@ -125,6 +218,15 @@ class listingsImport {
      */
     private function searchFieldList($searchFor, $field_sid = null, $list = null)
     {   
+        if (is_array($searchFor))
+        {
+            $searchFor = current($searchFor);
+        }
+        if ($searchFor === '')
+        {
+            return null;
+        }
+
         if (is_null($list)) {
             $list = $this->fieldList;
         }
@@ -185,7 +287,7 @@ class listingsImport {
             //'twitter_repost_status' => '',
 
             'category_sid' => 4, // @see table classifieds_categories
-            'user_sid' => 223, // @see table users_users @todo may need to be dynamic in future
+            'user_sid' => $this->getListingUserID($listing), // @see table users_users @todo may need to be dynamic in future
             'active' => 1,
             'moderation_status' => 'APPROVED',
             'activation_date' => date("Y-m-d H:i:s"),
@@ -216,11 +318,14 @@ class listingsImport {
             'Sold' => $this->getListingSold($listing),
             'ListingRating' => $this->getListingListingRating($listing),
             'FuelType' => $this->getListingFuelType($listing),
-            'DriveType' => $this->getListingDriveType($listing)
+            'DriveType' => $this->getListingDriveType($listing),
+            'Images' => $this->getListingImages($listing)
         );
 
         // add on the options        
         $returnListing += $this->getListingOptions($listing);
+
+        return $returnListing;
     }
 
     /** 
@@ -229,6 +334,46 @@ class listingsImport {
      * The original methods are based on xml data
      * from dealercarsearch.com
      */
+
+    /** will need to be overridden in extending class **/
+    protected function mapListingOptions() {
+        $return = array(
+            // options
+            'AirConditioning' => 'Air Conditioning',
+            'AlloyWheels' => 'Alloy Wheel',
+            'AmFmRadio' => 'AM/FM',
+            'AmFmStereoTape' => '', // not sure - I've requested complete list from provider
+            'DriverAirBag' => 'Driver Airbag',
+            'PassengerAirBag' => 'Passenger Airbag',
+            'SideAirBag' => 'Side Airbags',
+            'AntiLockBrakes' => 'Anti-Lock Brakes',
+            'PowerSteering' => 'Power Steering',
+            'CruiseControl' => 'Cruise Control', // not sure
+            'Video' => '', // not sure
+            'LeatherSeats' => 'Leather Seats',
+            'PowerSeats' => 'Power Seats',
+            'ChildSeat' => '', // not sure
+            'TiltWheel' => 'Tilt Wheel',
+            'PowerWindows' => 'Power Windows/Locks: Standard',
+            'RearWindowDefroster' => 'Rear Defroster',
+            'PowerDoorLocks' => 'Power Locks',
+            'TintedGlass' => 'Tinted Windows',
+            'CompactDiscPlayer' => 'CD',
+            'PowerMirrors' => 'Power Mirrors',
+            'CompactDiscChanger' => 'CD Changer', // not sure
+            'SunroofMoonroof' => 'Sun Roof',
+            'AutomaticHeadlights' => 'Automatic Headlights',
+            'DaytimeRunningLights' => 'Daytime Running Lights',
+            'ElectronicBrakeAssistance' => 'Electronic Brake Assistance',
+            'FogLights' => 'Fog Lights',
+            'KeylessEntry' => 'Keyless Entry',
+            'RemoteIgnition' => '', // not sure
+            'SteeringWheelMountedControls' => 'Steering Wheel Mounted Controls',
+            'Navigation' => 'Navigation'
+        );
+
+        return $return;
+    }
     
     /**
      * getListingOptions may be complicated with future feeds
@@ -241,35 +386,38 @@ class listingsImport {
      */
     protected function getListingOptions($listing)
     {
-        $return = array();
-        $options = array();
-        $options = explode(',', $listing['Options']);
-        $iCount = count($this->allListingOptions);
-        var_dump($options);
-        for ($i = 0; $i < $iCount; $i++)
-        {
-            
-            $thisField = $this->allListingOptions[$i];
-            foreach ($options as $option)
-            {
-                $stripped = preg_replace("/[^a-zA-Z0-9]/", "", $option);
-                $val = $this->searchFieldList($stripped, null, $this->allListingOptions);
-                //print '<br>Searched for: ' . $stripped . '... Got Back: ' . $val . "<br>";
-                if ($stripped == 'AirConditioning')
-                {
-                    var_dump(is_null($val));
-                    var_dump($val);
-                }
-                $return[$thisField] = is_null($val) ? (int)0 : (int)1;
-            }
-            
-            
-            
+     
+        if ($listing['Options'] === '' || is_array($listing['Options'])) {
+            return array();
         }
-        var_dump($return);
-        die();
-        
+        $return = array();
+        $optionsMap = $this->mapListingOptions();
+        $options = $listing['Options'];
+        $options = explode(',', $options);
+        foreach ($optionsMap as $dbField => $option) {
+            $return[$dbField] = 0;
+            if (array_search($option, $options))
+            {
+                $return[$dbField] = 1;
+            }
+        }
 
+        return $return;
+        
+    }
+    protected function getListingImages($listing) 
+    {
+        $return = array();
+        if (!empty($listing['Images']))
+        {
+            $return = explode(',', $listing['Images']);
+        }
+
+        return $return;
+    }
+    protected function getListingUserID($listing)
+    {
+        return 220;
     }
     protected function getListingDriveType($listing)
     {
@@ -374,8 +522,14 @@ class listingsImport {
     protected function getListingYoutubeVideoID($listing)
     {
         $videoURL = $listing['Video_x0020_URL'];
-        parse_str(parse_url($videoURL, PHP_URL_QUERY), $video);
-        return $video['v'];
+        $video = array();
+        if (!empty($videoURL))
+        {
+            parse_str(parse_url($videoURL, PHP_URL_QUERY), $video);
+            return $video['v'];
+        }
+        return '';
+        
     }
     protected function getListingKeywords($listing)
     {
@@ -388,6 +542,11 @@ class listingsImport {
     }
     protected function getListingPicturesCount($listing)
     {
+        if (is_array($listing['Images'])) 
+        {
+            // if a field is empty it is sent as an array
+            $listing['Images'] = '';
+        }
         $images = explode(',', $listing['Images']);
         return count($images);
     }
@@ -412,7 +571,9 @@ class listingsImport {
         
     // }
 
+    
     // @todo - is this necessary/convenient/better?
+    // may deprecate
     private function getAllListingOptions() {
         $return = array(
             // options
