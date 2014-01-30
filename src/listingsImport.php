@@ -106,7 +106,6 @@ class listingsImport {
         $this->listingMap = $this->mapListings($this->listingDump['auto']);      
 
         $this->listingsCreateUpdateDelete();
-        var_dump($this->listingMap);
 
 
     }
@@ -120,83 +119,108 @@ class listingsImport {
         $update = array();
         // if the VIN and sid is in db, but not in listingMap, delete from DB
         $delete = array();
-        $currentListings = getCurrentDealerListings();
+        $currentListings = $this->getCurrentDealerListings();
+        $currentVins = array_keys($currentListings);
+        var_dump($currentVins);
+        print 'Current Listings: ' . count($currentListings);
+        print "<br>";
         foreach ($this->listingMap as $listing) {
+            //var_dump($listing);
+            if ($found = array_search($listing['Vin'], $currentVins))
+            {
+                $update[] = $listing;                
+            }
+            else 
+            {
+                $create[] = $listing;
+            }
             
+            unset($currentVins[$listing['Vin']]);
         }
+        /**
+         * Need one more check for deletes to make sure user_sid is accurate
+         */
+        print 'Updates: ' . count($update);
+        print "<br>";
+        print 'Creates: ' . count($create);
+        print "<br>";
+        print 'Deletes: ' . count($currentListings);
+        print "<br>";
+
     }
 
     private function getCurrentDealerListings()
     {
         $sid = $this->getListingUserID(null);
-        $query = $this->conn->prepare("SELECT sid, user_id, Vin FROM classifieds_listings");
+        $query = $this->conn->prepare("SELECT sid, user_sid, Vin FROM classifieds_listings");
         $query->execute();
 
         while ($row = $query->fetch(PDO::FETCH_ASSOC)) {
-            $results[] = $row;
+            $results[$row['Vin']]['sid'] = $row['sid'];
+            $results[$row['Vin']]['user_sid'] = $row['user_sid'];
         }
 
         return $results;
-        $getFields = array(
-            'sid',
-            'user_sid',
-            'keywords',
-            'views',
-            'pictures',
-            'feature_youtube_video_id',
-            'AirConditioning',
-            'AlloyWheels',
-            'AmFmRadio',
-            'AmFmStereoTape',
-            'ZipCode',
-            'Price',
-            'Year',
-            'Mileage',
-            'Condition',
-            'Vin',
-            'ExteriorColor',
-            'InteriorColor',
-            'Doors',
-            'Engine',
-            'Transmission',
-            'FuelType',
-            'DriveType',
-            'DriverAirBag',
-            'PassengerAirBag',
-            'SideAirBag',
-            'AntiLockBrakes',
-            'PowerSteering',
-            'CruiseControl',
-            'Video',
-            'MakeModel',
-            'BodyStyle',
-            'LeatherSeats',
-            'PowerSeats',
-            'ChildSeat',
-            'TiltWheel',
-            'PowerWindows',
-            'RearWindowDefroster',
-            'PowerDoorLocks',
-            'TintedGlass',
-            'CompactDiscPlayer',
-            'PowerMirrors',
-            'CompactDiscChanger',
-            'SunroofMoonroof',
-            'SellerComments',
-            'Address',
-            'City',
-            'State',
-            'Sold',
-            'ListingRating',
-            'AutomaticHeadlights',
-            'DaytimeRunningLights',
-            'ElectronicBrakeAssistance',
-            'FogLights',
-            'KeylessEntry',
-            'RemoteIgnition',
-            'SteeringWheelMountedControls',
-            'Navigation'
-        );
+        // $getFields = array(
+        //     'sid',
+        //     'user_sid',
+        //     'keywords',
+        //     'views',
+        //     'pictures',
+        //     'feature_youtube_video_id',
+        //     'AirConditioning',
+        //     'AlloyWheels',
+        //     'AmFmRadio',
+        //     'AmFmStereoTape',
+        //     'ZipCode',
+        //     'Price',
+        //     'Year',
+        //     'Mileage',
+        //     'Condition',
+        //     'Vin',
+        //     'ExteriorColor',
+        //     'InteriorColor',
+        //     'Doors',
+        //     'Engine',
+        //     'Transmission',
+        //     'FuelType',
+        //     'DriveType',
+        //     'DriverAirBag',
+        //     'PassengerAirBag',
+        //     'SideAirBag',
+        //     'AntiLockBrakes',
+        //     'PowerSteering',
+        //     'CruiseControl',
+        //     'Video',
+        //     'MakeModel',
+        //     'BodyStyle',
+        //     'LeatherSeats',
+        //     'PowerSeats',
+        //     'ChildSeat',
+        //     'TiltWheel',
+        //     'PowerWindows',
+        //     'RearWindowDefroster',
+        //     'PowerDoorLocks',
+        //     'TintedGlass',
+        //     'CompactDiscPlayer',
+        //     'PowerMirrors',
+        //     'CompactDiscChanger',
+        //     'SunroofMoonroof',
+        //     'SellerComments',
+        //     'Address',
+        //     'City',
+        //     'State',
+        //     'Sold',
+        //     'ListingRating',
+        //     'AutomaticHeadlights',
+        //     'DaytimeRunningLights',
+        //     'ElectronicBrakeAssistance',
+        //     'FogLights',
+        //     'KeylessEntry',
+        //     'RemoteIgnition',
+        //     'SteeringWheelMountedControls',
+        //     'Navigation'
+        // );
         
     }
 
@@ -640,4 +664,4 @@ class dealerCarSearchListingsImport extends listingsImport {
 
 $test = new dealerCarSearchListingsImport;
 $test->importFile('../DCS_Autoz4Sell.xml');
-$test->showDataDump();
+//$test->showDataDump();
