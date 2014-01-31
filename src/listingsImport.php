@@ -180,7 +180,7 @@ class listingsImport {
             // }
             $columnList = "`" . join("`,`", $columns) . "`";
             $params = array_map(function($col) { return ":$col"; }, $columns);
-            $paramList = "'" . join("','", array_map(function($col) { return ":$col"; }, $columns))  . "'";
+            $paramList = join(",", array_map(function($col) { return ":$col"; }, $columns));
 
             $paramValues = array_combine($params, array_values($create[$i]));
             //print $columnList . '<br>';
@@ -190,29 +190,36 @@ class listingsImport {
             //var_dump($paramValues);
             foreach ($paramValues as $k => $v)
             {
-                //print "binding ${v} to ${k}<br>";
-                $stmt->bindParam("{$k}", $v);
+                 //print "binding ${v} to ${k}<br>";
+                print "{$k} => {$v} <br>";
+                $stmt->bindValue($k, $v);
             }
-            print_r($stmt);
             // @todo move to logging 
             if ($stmt === false) { die(var_dump($this->conn->errorInfo(), true)); }
-
+            
             $insert = $stmt->execute();
-            print_r($insert);
+            $lastSID = $this->conn->lastInsertId('sid');
             if ($insert === false) { die(var_dump($this->conn->errorInfo(), true));}       
-
+            $stmt->commit;
+            // handle images
+            $imageHandler = $this->getListingImages($images, $lastSID);
 
         }
     }
 
     private function updateListings($update)
     {
-        var_dump($update);
+        //var_dump($update);
     }
 
     private function deleteListings($delete)
     {
 
+    }
+
+    private function getListingImages($images, $lastSID)
+    {
+        
     }
 
     private function getCurrentDealerListings($userId = null)
