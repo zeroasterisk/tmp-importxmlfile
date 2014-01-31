@@ -99,11 +99,13 @@ class listingsImport {
      */
     public function importFile($filePath)
     {
+
         $xml = simplexml_load_file($filePath);
+        
         // make it into a nice array
         $this->listingDump = unserialize(serialize(json_decode(json_encode((array) $xml), 1)));
-
-        $this->listingMap = $this->mapListings($this->listingDump['auto']);      
+        
+        $this->listingMap = $this->mapListingsForDealers($this->listingDump); 
 
         $this->listingsCreateUpdateDelete();
 
@@ -112,47 +114,120 @@ class listingsImport {
 
     private function listingsCreateUpdateDelete()
     {
-        $currentListings = $this->getCurrentDealerListings();
-        // if the VIN and sid (user id) isn't in db, create the listing
-        $create = array();
-        // if the VIN and sid is in db, update the listing (maybe update if different)
-        $update = array();
-        // if the VIN and sid is in db, but not in listingMap, delete from DB
-        $delete = array();
-        $currentListings = $this->getCurrentDealerListings();
-        $currentVins = array_keys($currentListings);
-        var_dump($currentVins);
-        print 'Current Listings: ' . count($currentListings);
-        print "<br>";
-        foreach ($this->listingMap as $listing) {
-            //var_dump($listing);
-            if ($found = array_search($listing['Vin'], $currentVins))
-            {
-                $update[] = $listing;                
+        $nightlyFeed = $this->listingMap;
+
+        foreach ($nightlyFeed as $dealerInventory)
+        {
+            $dealerSID = $dealerInventory[0]['user_sid'];
+            $currentDealerListings = $this->getCurrentDealerListings($dealerSID);
+            $currentVins = array_keys($currentDealerListings);
+
+            // if the VIN and sid (user id) isn't in db, create the listing
+            $create = array();
+            // if the VIN and sid is in db, update the listing (maybe update if different)
+            $update = array();
+            // if the VIN and sid is in db, but not in listingMap, delete from DB
+            $delete = array(); 
+            foreach ($dealerInventory as $inventoryItem) {
+                //var_dump($listing);
+                $searchResult = array_search($inventoryItem['Vin'], $currentVins);
+                if ($searchResult)
+                {
+                    $update[] = $inventoryItem;                
+                }
+                else 
+                {
+                    $create[] = $inventoryItem;
+                }
+                
+                unset($currentVins[$searchResult]);
             }
-            else 
-            {
-                $create[] = $listing;
-            }
+            // everything in $currentVins is in db under this user, but not in feed, so we delete
+            $delete = $currentVins;
             
-            unset($currentVins[$listing['Vin']]);
-        }
-        /**
-         * Need one more check for deletes to make sure user_sid is accurate
-         */
-        print 'Updates: ' . count($update);
-        print "<br>";
-        print 'Creates: ' . count($create);
-        print "<br>";
-        print 'Deletes: ' . count($currentListings);
-        print "<br>";
+            $this->createListings($create);
+            $this->updateListings($update);
+            $this->deleteListings($delete);
+        }        
 
     }
 
-    private function getCurrentDealerListings()
+    /**
+     * [createListings description]
+     * @param  array $create
+     * @return [type]
+     */
+    private function createListings($create)
     {
-        $sid = $this->getListingUserID(null);
-        $query = $this->conn->prepare("SELECT sid, user_sid, Vin FROM classifieds_listings");
+        // all empty arrays need to be null or empty string        
+        for ($i = 0; $i < count($create); $i++)
+        {
+            foreach ($create[$i] as $k => $field)
+            {
+                if (is_array($field) && empty($field))
+                {
+                    $create[$i][$k] = null;
+                }
+                // @todo, do we need to serialize in case?
+            }
+            $images = $create[$i]['Images'];
+            unset($create[$i]['Images']);
+            // the insert
+            $columns = array_keys($create[$i]);
+            // for ($c = 0; $c < count($columns); $c++)
+            // {
+            //     //$columns[$i] = $this->conn->quote($columns[$i]);
+            // }
+            $columnList = "`" . join("`,`", $columns) . "`";
+            $params = array_map(function($col) { return ":$col"; }, $columns);
+            $paramList = "'" . join("','", array_map(function($col) { return ":$col"; }, $columns))  . "'";
+
+            $paramValues = array_combine($params, array_values($create[$i]));
+            //print $columnList . '<br>';
+            //print $paramList . '<br>';
+            $sql = "INSERT INTO `classifieds_listings` ($columnList) VALUES ($paramList)";
+            $stmt = $this->conn->prepare($sql);
+            //var_dump($paramValues);
+            foreach ($paramValues as $k => $v)
+            {
+                //print "binding ${v} to ${k}<br>";
+                $stmt->bindParam("{$k}", $v);
+            }
+            print_r($stmt);
+            // @todo move to logging 
+            if ($stmt === false) { die(var_dump($this->conn->errorInfo(), true)); }
+
+            $insert = $stmt->execute();
+            print_r($insert);
+            if ($insert === false) { die(var_dump($this->conn->errorInfo(), true));}       
+
+
+        }
+    }
+
+    private function updateListings($update)
+    {
+        var_dump($update);
+    }
+
+    private function deleteListings($delete)
+    {
+
+    }
+
+    private function getCurrentDealerListings($userId = null)
+    {
+        $stmt = "SELECT sid, user_sid, Vin FROM classifieds_listings";
+        if (!is_null($userId))
+        {
+            $stmt .= " WHERE user_sid = :user_sid";
+        }
+        $query = $this->conn->prepare($stmt);
+        if (!is_null($userId))
+        {
+            $query->bindParam(':user_sid', $userId, PDO::PARAM_INT);
+        }      
+
         $query->execute();
 
         while ($row = $query->fetch(PDO::FETCH_ASSOC)) {
@@ -224,12 +299,23 @@ class listingsImport {
         
     }
 
-    private function mapListings($listings)
+    protected function mapListingsForDealers($dealerCars)
     {
         $return = array();
-        foreach ($listings as $listing) 
+        foreach ($dealerCars as $dealer)
+        {   
+            $return[] = $this->mapListings($dealer);
+        }
+
+        return $return;
+    }
+
+    protected function mapListings($listings)
+    {
+        $return = array();
+        foreach ($listings as $advertiser) 
         {
-            $return[] = $this->mapListing($listing);
+            $return[] = $this->mapListing($advertiser);
         }
 
         return $return;
@@ -352,6 +438,18 @@ class listingsImport {
         return $returnListing;
     }
 
+    /* Anytime a new dealer is added, they need to be mapped to their
+       respective user id within the CMS
+       */
+    private function mapDealerNumberToUserSID($dealerNumber)
+    {
+        $dealerMap = array(
+            '5555' => 220
+        );
+
+        return $dealerMap[$dealerNumber];
+    }
+
     /** 
      * the getListing*() methods that should be 
      * overridden for different data sources.
@@ -441,7 +539,7 @@ class listingsImport {
     }
     protected function getListingUserID($listing)
     {
-        return 220;
+        return $this->mapDealerNumberToUserSID($listing['Dealer_x0020_ID']);
     }
     protected function getListingDriveType($listing)
     {
