@@ -131,7 +131,8 @@ class listingsImport {
             foreach ($dealerInventory as $inventoryItem) {
                 //var_dump($listing);
                 $searchResult = array_search($inventoryItem['Vin'], $currentVins);
-                if ($searchResult)
+                
+                if ($searchResult !== false)
                 {
                     $update[] = $inventoryItem;                
                 }
@@ -143,11 +144,11 @@ class listingsImport {
                 unset($currentVins[$searchResult]);
             }
             // everything in $currentVins is in db under this user, but not in feed, so we delete
-            $delete = $currentVins;
             
+            $delete = $currentVins;
             $this->createListings($create);
             $this->updateListings($update);
-            $this->deleteListings($delete);
+            $this->deleteListings($delete, $dealerSID);
         }        
 
     }
@@ -159,6 +160,7 @@ class listingsImport {
      */
     private function createListings($create)
     {
+
         // all empty arrays need to be null or empty string        
         for ($i = 0; $i < count($create); $i++)
         {
@@ -191,7 +193,6 @@ class listingsImport {
             foreach ($paramValues as $k => $v)
             {
                  //print "binding ${v} to ${k}<br>";
-                print "{$k} => {$v} <br>";
                 $stmt->bindValue($k, $v);
             }
             // @todo move to logging 
@@ -200,26 +201,202 @@ class listingsImport {
             $insert = $stmt->execute();
             $lastSID = $this->conn->lastInsertId('sid');
             if ($insert === false) { die(var_dump($this->conn->errorInfo(), true));}       
-            $stmt->commit;
+            
             // handle images
-            $imageHandler = $this->getListingImages($images, $lastSID);
+            $imgCaption = $create[$i]['keywords'];
+            $imageHandler = $this->getAndStoreListingImages($images, $lastSID, $imgCaption);
 
         }
     }
 
     private function updateListings($update)
     {
-        //var_dump($update);
+
+        for ($i = 0; $i < count($update); $i++)
+        {
+            foreach ($update[$i] as $k => $field)
+            {
+                if (is_array($field) && empty($field))
+                {
+                    $update[$i][$k] = null;
+                }
+                // @todo, do we need to serialize in case?
+            }
+
+            $vin = $update[$i]['Vin'];
+            $user_sid = $update[$i]['user_sid'];
+            unset($update[$i]['Vin'], $update[$i]['user_sid'], $update[$i]['Images']);
+            $updateStmt = array();
+            $paramArr = array();
+            foreach ($update[$i] as $column => $value)
+            {
+                $updateStmt[]= "`{$column}` = :{$column}";
+                $paramArr[":{$column}"] = $value; 
+            }
+            $updateStmt = implode(', ', $updateStmt);
+            $sql = "UPDATE `classifieds_listings` SET {$updateStmt} WHERE Vin = :vin AND user_sid = :user_sid";
+            $stmt = $this->conn->prepare($sql);
+            foreach ($paramArr as $bindTo => $bindValue)
+            {
+                $stmt->bindValue($bindTo, $bindValue);
+            }
+            
+            $stmt->bindParam(':vin', $vin);
+            $stmt->bindParam(':user_sid', $user_sid);
+
+            // @todo move to logging 
+            if ($stmt === false) { die(var_dump($this->conn->errorInfo(), true)); }
+            
+            $runUpdate = $stmt->execute();
+
+            if ($runUpdate === false) { die(var_dump($this->conn->errorInfo(), true));}       
+        }
     }
 
-    private function deleteListings($delete)
+    private function deleteListings($delete, $user_id)
+    {
+        $toDelete = array();
+        $deleteTbls = array('sid' => 'classifieds_listings', 'listing_sid' => 'classifieds_listings_pictures');
+        foreach ($delete as $d)
+        {
+            // get the record first
+            
+            $qry = "SELECT sid FROM `classifieds_listings` WHERE Vin = :vin AND user_sid = :user_id";
+            $sel = $this->conn->prepare($qry);
+            $sel->bindValue(':vin', $d);
+            $sel->bindValue(':user_id', $user_id);
+            $results = $sel->execute();
+            $sid = $sel->fetch();
+            
+            $toDelete[] = $sid['sid'];
+
+            // $qry = "DELETE FROM `classifieds_listings` WHERE Vin = :vin AND user_sid = :user_sid";
+            // $stmt = $this->conn->prepare($qry);
+            
+            // // @todo move to logging 
+            // if ($stmt === false) { die(var_dump($this->conn->errorInfo(), true)); }
+            // $runDelete = $stmt->execute();
+            // if ($runDelete === false) { die(var_dump($this->conn->errorInfo(), true));}
+        }
+
+        foreach ($toDelete as $del)
+        {
+            foreach ($deleteTbls as $field => $tbl) {
+                $qry = "DELETE FROM `{$tbl}` WHERE `{$field}` = {$del}";
+                $stmt = $this->conn->prepare($qry);
+                $stmt->execute();
+            }
+        }
+    }
+
+    private function cleanUpEmptyValues($value)
     {
 
     }
-
-    private function getListingImages($images, $lastSID)
+    private function getAndStoreListingImages($images, $lastSID, $imageCaption)
     {
-        
+        // where do images go?
+        $imgFolder = '../files/pictures/';
+        $imgFolder = './';
+        $tmpName = 'tmpImage';
+        for($i = 0; $i < count($images); $i++)
+        {
+            $tmpImg = $images[$i];
+            $tmpName .= $i;
+            $tmpExt = substr($tmpImg, strrpos($tmpImg, '.'));
+            copy($images[$i], $imgFolder . $tmpName . $tmpExt);
+            $sql = "INSERT INTO `classifieds_listings_pictures` (`listing_sid`,`storage_method`,`order`,`caption`)";
+            $sql .= " VALUES (:list_sid, :storage_method, :order, :caption)";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bindParam(':list_sid', $lastSID);
+            $stmt->bindValue(':storage_method', 'file_system');
+            $stmt->bindParam(':order', $i);
+            $stmt->bindParam(':caption', $imageCaption);
+
+            $insert = $stmt->execute();
+            $lastId = $this->conn->lastInsertId('sid');
+
+            // rename the file
+            $permPic = 'picture_' . $lastId . $tmpExt;
+            $thumb = 'thumb_' . $lastId . $tmpExt;
+            rename($imgFolder . $tmpName . $tmpExt, $imgFolder . $permPic );
+
+            // create the thumb
+            $thumbcopy = imagecreatefromjpeg($imgFolder . $permPic);
+            
+            $newThumb = $this->thumbnailBox($thumbcopy, 100, 100, $thumb);
+           
+            
+            $sql = "UPDATE `classifieds_listings_pictures` SET `picture_saved_name` = :permPic, `thumb_saved_name` = :thumb";
+            $sql .= " WHERE sid = :sid";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bindParam(':permPic', $permPic);
+            $stmt->bindValue(':thumb', $thumb);
+            $stmt->bindParam(':sid', $lastId);
+            $update = $stmt->execute();
+
+        }
+    }
+
+    /**
+     * From http://stackoverflow.com/questions/747101/resize-crop-pad-a-picture-to-a-fixed-size
+     */
+    private function thumbnailBox($img, $box_w, $box_h, $dest) {
+        //create the image, of the required size
+        $new = imagecreatetruecolor($box_w, $box_h);
+        if($new === false) {
+            //creation failed -- probably not enough memory
+            return null;
+        }
+
+
+        //Fill the image with a light grey color
+        //(this will be visible in the padding around the image,
+        //if the aspect ratios of the image and the thumbnail do not match)
+        //Replace this with any color you want, or comment it out for black.
+        //I used grey for testing =)
+        $fill = imagecolorallocate($new, 200, 200, 205);
+        imagefill($new, 0, 0, $fill);
+
+        //compute resize ratio
+        $hratio = $box_h / imagesy($img);
+        $wratio = $box_w / imagesx($img);
+        $ratio = min($hratio, $wratio);
+
+        //if the source is smaller than the thumbnail size, 
+        //don't resize -- add a margin instead
+        //(that is, dont magnify images)
+        if($ratio > 1.0)
+            $ratio = 1.0;
+
+        //compute sizes
+        $sy = floor(imagesy($img) * $ratio);
+        $sx = floor(imagesx($img) * $ratio);
+
+        //compute margins
+        //Using these margins centers the image in the thumbnail.
+        //If you always want the image to the top left, 
+        //set both of these to 0
+        $m_y = floor(($box_h - $sy) / 2);
+        $m_x = floor(($box_w - $sx) / 2);
+
+        //Copy the image data, and resample
+        //
+        //If you want a fast and ugly thumbnail,
+        //replace imagecopyresampled with imagecopyresized
+        if(!imagecopyresampled($new, $img,
+            $m_x, $m_y, //dest x, y (margins)
+            0, 0, //src x, y (0,0 means top left)
+            $sx, $sy,//dest w, h (resample to this size (computed above)
+            imagesx($img), imagesy($img)) //src w, h (the full size of the original)
+        ) {
+            //copy failed
+            imagedestroy($new);
+            return null;
+        }
+        imagejpeg($new, $dest);
+        //copy successful
+        return $new;
     }
 
     private function getCurrentDealerListings($userId = null)
