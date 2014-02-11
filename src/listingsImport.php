@@ -35,7 +35,7 @@ class listingsImport {
     private $makeAndModelList;
 
     
-    public $imageFolder = './files/pictures/';
+    private $imageFolder = './files/pictures/';
     /**
      * Fire it up
      */
@@ -957,4 +957,4 @@ class dealerCarSearchListingsImport extends listingsImport {
 
 $test = new dealerCarSearchListingsImport;
 $test->importFile('./Cardealer/DCS_Autoz4Sell.xml');
-//$test->showDataDump();
+
