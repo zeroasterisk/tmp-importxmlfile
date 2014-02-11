@@ -34,11 +34,8 @@ class listingsImport {
      */
     private $makeAndModelList;
 
-    /**
-     * All options that can be stored for a vehicle
-     * @var array
-     */
-    //private $allListingOptions = array();
+    
+    public $imageFolder = './files/pictures/';
     /**
      * Fire it up
      */
@@ -299,10 +296,14 @@ class listingsImport {
     {
 
     }
+    public function setImageFolder($path)
+    {
+        $this->imageFolder = $path;
+    }
     private function getAndStoreListingImages($images, $lastSID, $imageCaption)
     {
         // where do images go?
-        $imgFolder = './files/pictures/';
+        $imgFolder = $this->imageFolder;
         //$imgFolder = './';
         $tmpName = 'tmpImage';
         for($i = 0; $i < count($images); $i++)
