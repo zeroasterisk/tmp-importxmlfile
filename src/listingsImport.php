@@ -1,7 +1,7 @@
 <?php
 
-ini_set('xdebug.var_display_max_depth', 10 );
-ini_set('xdebug.var_display_max_children', 10000 );
+//ini_set('xdebug.var_display_max_depth', 10 );
+//ini_set('xdebug.var_display_max_children', 10000 );
 
 
 
@@ -30,6 +30,13 @@ class listingsImport {
     private $fieldList;
 
     /**
+     * The make model list( from classifieds_listing_field_tree
+     */
+    private $makeAndModelList;
+
+    
+    private $imageFolder = './files/pictures/';
+    /**
      * Fire it up
      */
     public function __construct()
@@ -38,9 +45,8 @@ class listingsImport {
         $db = new dbConnection;
         $this->conn = $db->connection;
         $this->fieldList = $this->getFieldList();
-
-
-        var_dump($this->fieldList);
+        $this->makeAndModelList = $this->getMakeAndModelList();
+        //$this->allListingOptions = $this->getAllListingOptions();
         
     }
 
@@ -57,6 +63,7 @@ class listingsImport {
      */
     private function getFieldList()
     {
+        $_fieldList = array();
         $query = $this->conn->prepare("SELECT sid, field_sid, value FROM classifieds_listing_field_list");
         $query->execute();
 
@@ -68,6 +75,20 @@ class listingsImport {
         return $_fieldList;
     }
 
+    private function getMakeAndModelList()
+    {
+        $_list = array();
+        $query = $this->conn->prepare("SELECT sid, caption FROM classifieds_listing_field_tree");
+        $query->execute();
+
+        while ($row = $query->fetch(PDO::FETCH_ASSOC)) {
+            $thisKey = $row['sid'];
+            $_list[$thisKey] = $row['caption'];
+        }
+        
+        return $_list;
+    }
+
     /**
      * Inits the import
      * @param  string $filePath relative path to file
@@ -75,20 +96,421 @@ class listingsImport {
      */
     public function importFile($filePath)
     {
+
         $xml = simplexml_load_file($filePath);
+        
         // make it into a nice array
         $this->listingDump = unserialize(serialize(json_decode(json_encode((array) $xml), 1)));
+        
+        $this->listingMap = $this->mapListingsForDealers($this->listingDump); 
 
-        $this->listingMap = $this->mapListings($this->listingDump['auto']);        
+        $this->listingsCreateUpdateDelete();
+
+        // move the file
+        $time = date('Y_M_d', time());
+        $oldPath = pathinfo($filePath);
+        $newPath = $oldPath['dirname'] . $oldPath['filename'] . '_' . $time . '.' . $oldPath['extension'];
+        rename($filePath, $newPath);
+
 
     }
 
-    private function mapListings($listings)
+    private function listingsCreateUpdateDelete()
+    {
+        $nightlyFeed = $this->listingMap;
+
+        foreach ($nightlyFeed as $dealerInventory)
+        {
+            $dealerSID = $dealerInventory[0]['user_sid'];
+            $currentDealerListings = $this->getCurrentDealerListings($dealerSID);
+            $currentVins = array_keys($currentDealerListings);
+
+            // if the VIN and sid (user id) isn't in db, create the listing
+            $create = array();
+            // if the VIN and sid is in db, update the listing (maybe update if different)
+            $update = array();
+            // if the VIN and sid is in db, but not in listingMap, delete from DB
+            $delete = array(); 
+            foreach ($dealerInventory as $inventoryItem) {
+                //var_dump($listing);
+                $searchResult = array_search($inventoryItem['Vin'], $currentVins);
+                
+                if ($searchResult !== false)
+                {
+                    $update[] = $inventoryItem;                
+                }
+                else 
+                {
+                    $create[] = $inventoryItem;
+                }
+                
+                unset($currentVins[$searchResult]);
+            }
+            // everything in $currentVins is in db under this user, but not in feed, so we delete
+            
+            $delete = $currentVins;
+            $this->createListings($create);
+            $this->updateListings($update);
+            $this->deleteListings($delete, $dealerSID);
+        }        
+
+    }
+
+    /**
+     * [createListings description]
+     * @param  array $create
+     * @return [type]
+     */
+    private function createListings($create)
+    {
+
+        // all empty arrays need to be null or empty string        
+        for ($i = 0; $i < count($create); $i++)
+        {
+            foreach ($create[$i] as $k => $field)
+            {
+                if (is_array($field) && empty($field))
+                {
+                    $create[$i][$k] = null;
+                }
+                // @todo, do we need to serialize in case?
+            }
+            $images = $create[$i]['Images'];
+            unset($create[$i]['Images']);
+            // the insert
+            $columns = array_keys($create[$i]);
+            // for ($c = 0; $c < count($columns); $c++)
+            // {
+            //     //$columns[$i] = $this->conn->quote($columns[$i]);
+            // }
+            $columnList = "`" . join("`,`", $columns) . "`";
+            $params = array_map(function($col) { return ":$col"; }, $columns);
+            $paramList = join(",", array_map(function($col) { return ":$col"; }, $columns));
+
+            $paramValues = array_combine($params, array_values($create[$i]));
+            //print $columnList . '<br>';
+            //print $paramList . '<br>';
+            $sql = "INSERT INTO `classifieds_listings` ($columnList) VALUES ($paramList)";
+            $stmt = $this->conn->prepare($sql);
+            //var_dump($paramValues);
+            foreach ($paramValues as $k => $v)
+            {
+                 //print "binding ${v} to ${k}<br>";
+                $stmt->bindValue($k, $v);
+            }
+            // @todo move to logging 
+            if ($stmt === false) { die(var_dump($this->conn->errorInfo(), true)); }
+            
+            $insert = $stmt->execute();
+            $lastSID = $this->conn->lastInsertId('sid');
+            if ($insert === false) { die(var_dump($this->conn->errorInfo(), true));}       
+            print "Created listing id {$lastSID}. Number {$i} of " . count($create) . "<br>";
+            // handle images
+            $imgCaption = $create[$i]['keywords'];
+            $imageHandler = $this->getAndStoreListingImages($images, $lastSID, $imgCaption);
+
+        }
+    }
+
+    private function updateListings($update)
+    {
+
+        for ($i = 0; $i < count($update); $i++)
+        {
+            foreach ($update[$i] as $k => $field)
+            {
+                if (is_array($field) && empty($field))
+                {
+                    $update[$i][$k] = null;
+                }
+                // @todo, do we need to serialize in case?
+            }
+
+            $vin = $update[$i]['Vin'];
+            $user_sid = $update[$i]['user_sid'];
+            unset($update[$i]['Vin'], $update[$i]['user_sid'], $update[$i]['Images']);
+            $updateStmt = array();
+            $paramArr = array();
+            foreach ($update[$i] as $column => $value)
+            {
+                $updateStmt[]= "`{$column}` = :{$column}";
+                $paramArr[":{$column}"] = $value; 
+            }
+            $updateStmt = implode(', ', $updateStmt);
+            $sql = "UPDATE `classifieds_listings` SET {$updateStmt} WHERE Vin = :vin AND user_sid = :user_sid";
+            $stmt = $this->conn->prepare($sql);
+            foreach ($paramArr as $bindTo => $bindValue)
+            {
+                $stmt->bindValue($bindTo, $bindValue);
+            }
+            
+            $stmt->bindParam(':vin', $vin);
+            $stmt->bindParam(':user_sid', $user_sid);
+
+            // @todo move to logging 
+            if ($stmt === false) { die(var_dump($this->conn->errorInfo(), true)); }
+            
+            $runUpdate = $stmt->execute();
+
+            if ($runUpdate === false) { die(var_dump($this->conn->errorInfo(), true));}       
+        }
+    }
+
+    private function deleteListings($delete, $user_id)
+    {
+        $toDelete = array();
+        $deleteTbls = array('sid' => 'classifieds_listings', 'listing_sid' => 'classifieds_listings_pictures');
+        foreach ($delete as $d)
+        {
+            // get the record first
+            
+            $qry = "SELECT sid FROM `classifieds_listings` WHERE Vin = :vin AND user_sid = :user_id";
+            $sel = $this->conn->prepare($qry);
+            $sel->bindValue(':vin', $d);
+            $sel->bindValue(':user_id', $user_id);
+            $results = $sel->execute();
+            $sid = $sel->fetch();
+            
+            $toDelete[] = $sid['sid'];
+
+            // $qry = "DELETE FROM `classifieds_listings` WHERE Vin = :vin AND user_sid = :user_sid";
+            // $stmt = $this->conn->prepare($qry);
+            
+            // // @todo move to logging 
+            // if ($stmt === false) { die(var_dump($this->conn->errorInfo(), true)); }
+            // $runDelete = $stmt->execute();
+            // if ($runDelete === false) { die(var_dump($this->conn->errorInfo(), true));}
+        }
+
+        foreach ($toDelete as $del)
+        {
+            foreach ($deleteTbls as $field => $tbl) {
+                $qry = "DELETE FROM `{$tbl}` WHERE `{$field}` = {$del}";
+                $stmt = $this->conn->prepare($qry);
+                $stmt->execute();
+            }
+        }
+    }
+
+    private function cleanUpEmptyValues($value)
+    {
+
+    }
+    public function setImageFolder($path)
+    {
+        $this->imageFolder = $path;
+    }
+    private function getAndStoreListingImages($images, $lastSID, $imageCaption)
+    {
+        // where do images go?
+        $imgFolder = $this->imageFolder;
+        //$imgFolder = './';
+        $tmpName = 'tmpImage';
+        for($i = 0; $i < count($images); $i++)
+        {
+            $tmpImg = $images[$i];
+            $tmpName .= $i;
+            $tmpExt = substr($tmpImg, strrpos($tmpImg, '.'));
+            
+            $copy = copy($images[$i], $imgFolder . $tmpName . $tmpExt);
+            
+            $sql = "INSERT INTO `classifieds_listings_pictures` (`listing_sid`,`storage_method`,`order`,`caption`)";
+            $sql .= " VALUES (:list_sid, :storage_method, :order, :caption)";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bindParam(':list_sid', $lastSID);
+            $stmt->bindValue(':storage_method', 'file_system');
+            $stmt->bindParam(':order', $i);
+            $stmt->bindParam(':caption', $imageCaption);
+
+            $insert = $stmt->execute();
+            $lastId = $this->conn->lastInsertId('sid');
+
+            // rename the file
+            $permPic = 'picture_' . $lastId . $tmpExt;
+            $thumb = 'thumb_' . $lastId . $tmpExt;
+            
+            // create the thumb            
+            $thumbcopy = imagecreatefromjpeg($imgFolder . $permPic);
+            
+            
+            $newThumb = $this->thumbnailBox($thumbcopy, 100, 100, $thumb, $imgFolder);
+            
+            
+            $sql = "UPDATE `classifieds_listings_pictures` SET `picture_saved_name` = :permPic, `thumb_saved_name` = :thumb";
+            $sql .= " WHERE sid = :sid";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bindParam(':permPic', $permPic);
+            $stmt->bindValue(':thumb', $thumb);
+            $stmt->bindParam(':sid', $lastId);
+            $update = $stmt->execute();
+
+        }
+    }
+
+    /**
+     * From http://stackoverflow.com/questions/747101/resize-crop-pad-a-picture-to-a-fixed-size
+     */
+    private function thumbnailBox($img, $box_w, $box_h, $dest, $folder) {
+        //create the image, of the required size
+        $new = imagecreatetruecolor($box_w, $box_h);
+        if($new === false) {
+            //creation failed -- probably not enough memory
+            die( print __LINE__ . 'new = false');
+            return null;
+        }
+
+
+        //Fill the image with a light grey color
+        //(this will be visible in the padding around the image,
+        //if the aspect ratios of the image and the thumbnail do not match)
+        //Replace this with any color you want, or comment it out for black.
+        //I used grey for testing =)
+        $fill = imagecolorallocate($new, 200, 200, 205);
+        imagefill($new, 0, 0, $fill);
+
+        //compute resize ratio
+        $hratio = $box_h / imagesy($img);
+        $wratio = $box_w / imagesx($img);
+        $ratio = min($hratio, $wratio);
+
+        //if the source is smaller than the thumbnail size, 
+        //don't resize -- add a margin instead
+        //(that is, dont magnify images)
+        if($ratio > 1.0)
+            $ratio = 1.0;
+
+        //compute sizes
+        $sy = floor(imagesy($img) * $ratio);
+        $sx = floor(imagesx($img) * $ratio);
+
+        //compute margins
+        //Using these margins centers the image in the thumbnail.
+        //If you always want the image to the top left, 
+        //set both of these to 0
+        $m_y = floor(($box_h - $sy) / 2);
+        $m_x = floor(($box_w - $sx) / 2);
+
+        //Copy the image data, and resample
+        //
+        //If you want a fast and ugly thumbnail,
+        //replace imagecopyresampled with imagecopyresized
+        if(!imagecopyresampled($new, $img,
+            $m_x, $m_y, //dest x, y (margins)
+            0, 0, //src x, y (0,0 means top left)
+            $sx, $sy,//dest w, h (resample to this size (computed above)
+            imagesx($img), imagesy($img)) //src w, h (the full size of the original)
+        ) {
+            //copy failed
+            imagedestroy($new);
+            return null;
+        }
+            
+        //copy successful
+        return $new;
+    }
+
+    private function getCurrentDealerListings($userId = null)
+    {
+        $results = array();
+        $stmt = "SELECT sid, user_sid, Vin FROM classifieds_listings";
+        if (!is_null($userId))
+        {
+            $stmt .= " WHERE user_sid = :user_sid";
+        }
+        $query = $this->conn->prepare($stmt);
+        if (!is_null($userId))
+        {
+            $query->bindParam(':user_sid', $userId, PDO::PARAM_INT);
+        }      
+
+        $query->execute();
+
+        while ($row = $query->fetch(PDO::FETCH_ASSOC)) {
+            $results[$row['Vin']]['sid'] = $row['sid'];
+            $results[$row['Vin']]['user_sid'] = $row['user_sid'];
+        }
+
+        return $results;
+        // $getFields = array(
+        //     'sid',
+        //     'user_sid',
+        //     'keywords',
+        //     'views',
+        //     'pictures',
+        //     'feature_youtube_video_id',
+        //     'AirConditioning',
+        //     'AlloyWheels',
+        //     'AmFmRadio',
+        //     'AmFmStereoTape',
+        //     'ZipCode',
+        //     'Price',
+        //     'Year',
+        //     'Mileage',
+        //     'Condition',
+        //     'Vin',
+        //     'ExteriorColor',
+        //     'InteriorColor',
+        //     'Doors',
+        //     'Engine',
+        //     'Transmission',
+        //     'FuelType',
+        //     'DriveType',
+        //     'DriverAirBag',
+        //     'PassengerAirBag',
+        //     'SideAirBag',
+        //     'AntiLockBrakes',
+        //     'PowerSteering',
+        //     'CruiseControl',
+        //     'Video',
+        //     'MakeModel',
+        //     'BodyStyle',
+        //     'LeatherSeats',
+        //     'PowerSeats',
+        //     'ChildSeat',
+        //     'TiltWheel',
+        //     'PowerWindows',
+        //     'RearWindowDefroster',
+        //     'PowerDoorLocks',
+        //     'TintedGlass',
+        //     'CompactDiscPlayer',
+        //     'PowerMirrors',
+        //     'CompactDiscChanger',
+        //     'SunroofMoonroof',
+        //     'SellerComments',
+        //     'Address',
+        //     'City',
+        //     'State',
+        //     'Sold',
+        //     'ListingRating',
+        //     'AutomaticHeadlights',
+        //     'DaytimeRunningLights',
+        //     'ElectronicBrakeAssistance',
+        //     'FogLights',
+        //     'KeylessEntry',
+        //     'RemoteIgnition',
+        //     'SteeringWheelMountedControls',
+        //     'Navigation'
+        // );
+        
+    }
+
+    protected function mapListingsForDealers($dealerCars)
     {
         $return = array();
-        foreach ($listings as $listing) 
+        foreach ($dealerCars as $dealer)
+        {   
+            $return[] = $this->mapListings($dealer);
+        }
+
+        return $return;
+    }
+
+    protected function mapListings($listings)
+    {
+        $return = array();
+        foreach ($listings as $advertiser) 
         {
-            $return[] = $this->mapListing($listing);
+            $return[] = $this->mapListing($advertiser);
         }
 
         return $return;
@@ -99,22 +521,36 @@ class listingsImport {
      * @param  [type] $searchFor
      * @return [type]
      */
-    private function searchFieldList($searchFor, $field_sid = null)
+    private function searchFieldList($searchFor, $field_sid = null, $list = null)
     {   
+        if (is_array($searchFor))
+        {
+            $searchFor = current($searchFor);
+        }
+        if ($searchFor === '')
+        {
+            return null;
+        }
 
+        if (is_null($list)) {
+            $list = $this->fieldList;
+        }
         $searchFor = preg_quote($searchFor);
-        $return = preg_grep('/' . $searchFor . '/i', $this->fieldList);
+        $return = preg_grep('/' . $searchFor . '/i', $list);
 
         // if nothing is found
         // for now, return null
         // @todo logging
+
         if (!$return) 
         {
+            
             return null;
         }
         // if more than one row is returned, the field_sid is the tie breaker
         if (count($return) > 1)
         {
+            
             $keys = array_keys($return);
             $return = array_search($field_sid, $keys);
             $return = explode(':', $keys[$return]);
@@ -122,6 +558,7 @@ class listingsImport {
         }
         else
         {
+            
             $return = array_keys($return);
             return current($return);
         }
@@ -155,7 +592,7 @@ class listingsImport {
             //'twitter_repost_status' => '',
 
             'category_sid' => 4, // @see table classifieds_categories
-            'user_sid' => 223, // @see table users_users @todo may need to be dynamic in future
+            'user_sid' => $this->getListingUserID($listing), // @see table users_users @todo may need to be dynamic in future
             'active' => 1,
             'moderation_status' => 'APPROVED',
             'activation_date' => date("Y-m-d H:i:s"),
@@ -185,10 +622,27 @@ class listingsImport {
             'State' => $this->getListingState($listing),
             'Sold' => $this->getListingSold($listing),
             'ListingRating' => $this->getListingListingRating($listing),
+            'FuelType' => $this->getListingFuelType($listing),
+            'DriveType' => $this->getListingDriveType($listing),
+            'Images' => $this->getListingImages($listing)
         );
 
         // add on the options        
-        //$returnListing += $this->getListingOptions($listing);
+        $returnListing += $this->getListingOptions($listing);
+
+        return $returnListing;
+    }
+
+    /* Anytime a new dealer is added, they need to be mapped to their
+       respective user id within the CMS
+       */
+    private function mapDealerNumberToUserSID($dealerNumber)
+    {
+        $dealerMap = array(
+            '5555' => 220
+        );
+
+        return $dealerMap[$dealerNumber];
     }
 
     /** 
@@ -197,6 +651,99 @@ class listingsImport {
      * The original methods are based on xml data
      * from dealercarsearch.com
      */
+
+    /** will need to be overridden in extending class **/
+    protected function mapListingOptions() {
+        $return = array(
+            // options
+            'AirConditioning' => 'Air Conditioning',
+            'AlloyWheels' => 'Alloy Wheel',
+            'AmFmRadio' => 'AM/FM',
+            'AmFmStereoTape' => '', // not sure - I've requested complete list from provider
+            'DriverAirBag' => 'Driver Airbag',
+            'PassengerAirBag' => 'Passenger Airbag',
+            'SideAirBag' => 'Side Airbags',
+            'AntiLockBrakes' => 'Anti-Lock Brakes',
+            'PowerSteering' => 'Power Steering',
+            'CruiseControl' => 'Cruise Control', // not sure
+            'Video' => '', // not sure
+            'LeatherSeats' => 'Leather Seats',
+            'PowerSeats' => 'Power Seats',
+            'ChildSeat' => '', // not sure
+            'TiltWheel' => 'Tilt Wheel',
+            'PowerWindows' => 'Power Windows/Locks: Standard',
+            'RearWindowDefroster' => 'Rear Defroster',
+            'PowerDoorLocks' => 'Power Locks',
+            'TintedGlass' => 'Tinted Windows',
+            'CompactDiscPlayer' => 'CD',
+            'PowerMirrors' => 'Power Mirrors',
+            'CompactDiscChanger' => 'CD Changer', // not sure
+            'SunroofMoonroof' => 'Sun Roof',
+            'AutomaticHeadlights' => 'Automatic Headlights',
+            'DaytimeRunningLights' => 'Daytime Running Lights',
+            'ElectronicBrakeAssistance' => 'Electronic Brake Assistance',
+            'FogLights' => 'Fog Lights',
+            'KeylessEntry' => 'Keyless Entry',
+            'RemoteIgnition' => '', // not sure
+            'SteeringWheelMountedControls' => 'Steering Wheel Mounted Controls',
+            'Navigation' => 'Navigation'
+        );
+
+        return $return;
+    }
+    
+    /**
+     * getListingOptions may be complicated with future feeds
+     * dealercarsearch provides it as one string of comma separated values;
+     * others provide it as a key => (boolean) for each one
+     * e.g. 'AirConditiong' => 1, '4x4' => 0
+     *
+     * Update: matter of fact, this would be a pretty complicated
+     * algo to get perfect...will need some human interaction
+     */
+    protected function getListingOptions($listing)
+    {
+     
+        if ($listing['Options'] === '' || is_array($listing['Options'])) {
+            return array();
+        }
+        $return = array();
+        $optionsMap = $this->mapListingOptions();
+        $options = $listing['Options'];
+        $options = explode(',', $options);
+        foreach ($optionsMap as $dbField => $option) {
+            $return[$dbField] = 0;
+            if (array_search($option, $options))
+            {
+                $return[$dbField] = 1;
+            }
+        }
+
+        return $return;
+        
+    }
+    protected function getListingImages($listing) 
+    {
+        $return = array();
+        if (!empty($listing['Images']))
+        {
+            $return = explode(',', $listing['Images']);
+        }
+
+        return $return;
+    }
+    protected function getListingUserID($listing)
+    {
+        return $this->mapDealerNumberToUserSID($listing['Dealer_x0020_ID']);
+    }
+    protected function getListingDriveType($listing)
+    {
+        // @todo
+    }
+    protected function getListingFuelType($listing)
+    {
+        // @todo
+    }
     protected function getListingListingRating($listing)
     {
         // no data in dealercarsearch feed
@@ -227,14 +774,13 @@ class listingsImport {
     protected function getListingBodyStyle($listing)
     {
         $return = $this->searchFieldList($listing['Body_x0020_Type'], 160);
-        //$this->_debug($this->getSID($return), $listing['Body_x0020_Type']);
         return $this->getSID($return);
     }
-    /** @todo come back to this **/
+    
     protected function getListingMakeModel($listing)
     {
-        $return = $this->searchFieldList($listing['Cylinders']);
-        return $this->getSID($return);
+        $return = $this->searchFieldList($listing['Model'], null, $this->makeAndModelList);
+        return $return;
     }
     protected function getListingPrice($listing)
     {
@@ -293,8 +839,14 @@ class listingsImport {
     protected function getListingYoutubeVideoID($listing)
     {
         $videoURL = $listing['Video_x0020_URL'];
-        parse_str(parse_url($videoURL, PHP_URL_QUERY), $video);
-        return $video['v'];
+        $video = array();
+        if (!empty($videoURL))
+        {
+            parse_str(parse_url($videoURL, PHP_URL_QUERY), $video);
+            return $video['v'];
+        }
+        return '';
+        
     }
     protected function getListingKeywords($listing)
     {
@@ -307,6 +859,11 @@ class listingsImport {
     }
     protected function getListingPicturesCount($listing)
     {
+        if (is_array($listing['Images'])) 
+        {
+            // if a field is empty it is sent as an array
+            $listing['Images'] = '';
+        }
         $images = explode(',', $listing['Images']);
         return count($images);
     }
@@ -331,44 +888,46 @@ class listingsImport {
         
     // }
 
+    
     // @todo - is this necessary/convenient/better?
-    private function getListingOptions($listing) {
+    // may deprecate
+    private function getAllListingOptions() {
         $return = array(
             // options
-            'AirConditioning' => '',
-            'AlloyWheels' => '',
-            'AmFmRadio' => '',
-            'AmFmStereoTape' => '',
-            'FuelType' => '',
-            'DriveType' => '',
-            'DriverAirBag' => '',
-            'PassengerAirBag' => '',
-            'SideAirBag' => '',
-            'AntiLockBrakes' => '',
-            'PowerSteering' => '',
-            'CruiseControl' => '',
-            'Video' => '',
-            'LeatherSeats' => '',
-            'PowerSeats' => '',
-            'ChildSeat' => '',
-            'TiltWheel' => '',
-            'PowerWindows' => '',
-            'RearWindowDefroster' => '',
-            'PowerDoorLocks' => '',
-            'TintedGlass' => '',
-            'CompactDiscPlayer' => '',
-            'PowerMirrors' => '',
-            'CompactDiscChanger' => '',
-            'SunroofMoonroof' => '',
-            'AutomaticHeadlights' => '',
-            'DaytimeRunningLights' => '',
-            'ElectronicBrakeAssistance' => '',
-            'FogLights' => '',
-            'KeylessEntry' => '',
-            'RemoteIgnition' => '',
-            'SteeringWheelMountedControls' => '',
-            'Navigation' => '',
+            'AirConditioning',
+            'AlloyWheels',
+            'AmFmRadio',
+            'AmFmStereoTape',
+            'DriverAirBag',
+            'PassengerAirBag',
+            'SideAirBag',
+            'AntiLockBrakes',
+            'PowerSteering',
+            'CruiseControl',
+            'Video',
+            'LeatherSeats',
+            'PowerSeats',
+            'ChildSeat',
+            'TiltWheel',
+            'PowerWindows',
+            'RearWindowDefroster',
+            'PowerDoorLocks',
+            'TintedGlass',
+            'CompactDiscPlayer',
+            'PowerMirrors',
+            'CompactDiscChanger',
+            'SunroofMoonroof',
+            'AutomaticHeadlights',
+            'DaytimeRunningLights',
+            'ElectronicBrakeAssistance',
+            'FogLights',
+            'KeylessEntry',
+            'RemoteIgnition',
+            'SteeringWheelMountedControls',
+            'Navigation'
         );
+
+        return $return;
     }
 
     /**
@@ -397,5 +956,5 @@ class dealerCarSearchListingsImport extends listingsImport {
 
 
 $test = new dealerCarSearchListingsImport;
-$test->importFile('../DCS_Autoz4Sell.xml');
-$test->showDataDump();
+$test->importFile('./Cardealer/DCS_Autoz4Sell.xml');
+

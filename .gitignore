@@ -1,6 +1,6 @@
 tmp/*
 !empty
-
+files/*
 # application / coding temp files
 .sass-cache
 .phptidy-cache
