@@ -1,7 +1,7 @@
 <?php
 
-ini_set('xdebug.var_display_max_depth', 10 );
-ini_set('xdebug.var_display_max_children', 10000 );
+//ini_set('xdebug.var_display_max_depth', 10 );
+//ini_set('xdebug.var_display_max_children', 10000 );
 
 
 
@@ -109,6 +109,12 @@ class listingsImport {
 
         $this->listingsCreateUpdateDelete();
 
+        // move the file
+        $time = date('Y_M_d', time());
+        $oldPath = pathinfo($filePath);
+        $newPath = $oldPath['dirname'] . $oldPath['filename'] . '_' . $time . '.' . $oldPath['extension'];
+        rename($filePath, $newPath);
+
 
     }
 
@@ -201,7 +207,7 @@ class listingsImport {
             $insert = $stmt->execute();
             $lastSID = $this->conn->lastInsertId('sid');
             if ($insert === false) { die(var_dump($this->conn->errorInfo(), true));}       
-            
+            print "Created listing id {$lastSID}. Number {$i} of " . count($create) . "<br>";
             // handle images
             $imgCaption = $create[$i]['keywords'];
             $imageHandler = $this->getAndStoreListingImages($images, $lastSID, $imgCaption);
@@ -296,15 +302,17 @@ class listingsImport {
     private function getAndStoreListingImages($images, $lastSID, $imageCaption)
     {
         // where do images go?
-        $imgFolder = '../files/pictures/';
-        $imgFolder = './';
+        $imgFolder = './files/pictures/';
+        //$imgFolder = './';
         $tmpName = 'tmpImage';
         for($i = 0; $i < count($images); $i++)
         {
             $tmpImg = $images[$i];
             $tmpName .= $i;
             $tmpExt = substr($tmpImg, strrpos($tmpImg, '.'));
-            copy($images[$i], $imgFolder . $tmpName . $tmpExt);
+            
+            $copy = copy($images[$i], $imgFolder . $tmpName . $tmpExt);
+            
             $sql = "INSERT INTO `classifieds_listings_pictures` (`listing_sid`,`storage_method`,`order`,`caption`)";
             $sql .= " VALUES (:list_sid, :storage_method, :order, :caption)";
             $stmt = $this->conn->prepare($sql);
@@ -319,13 +327,13 @@ class listingsImport {
             // rename the file
             $permPic = 'picture_' . $lastId . $tmpExt;
             $thumb = 'thumb_' . $lastId . $tmpExt;
-            rename($imgFolder . $tmpName . $tmpExt, $imgFolder . $permPic );
-
-            // create the thumb
+            
+            // create the thumb            
             $thumbcopy = imagecreatefromjpeg($imgFolder . $permPic);
             
-            $newThumb = $this->thumbnailBox($thumbcopy, 100, 100, $thumb);
-           
+            
+            $newThumb = $this->thumbnailBox($thumbcopy, 100, 100, $thumb, $imgFolder);
+            
             
             $sql = "UPDATE `classifieds_listings_pictures` SET `picture_saved_name` = :permPic, `thumb_saved_name` = :thumb";
             $sql .= " WHERE sid = :sid";
@@ -341,11 +349,12 @@ class listingsImport {
     /**
      * From http://stackoverflow.com/questions/747101/resize-crop-pad-a-picture-to-a-fixed-size
      */
-    private function thumbnailBox($img, $box_w, $box_h, $dest) {
+    private function thumbnailBox($img, $box_w, $box_h, $dest, $folder) {
         //create the image, of the required size
         $new = imagecreatetruecolor($box_w, $box_h);
         if($new === false) {
             //creation failed -- probably not enough memory
+            die( print __LINE__ . 'new = false');
             return null;
         }
 
@@ -394,13 +403,14 @@ class listingsImport {
             imagedestroy($new);
             return null;
         }
-        imagejpeg($new, $dest);
+            
         //copy successful
         return $new;
     }
 
     private function getCurrentDealerListings($userId = null)
     {
+        $results = array();
         $stmt = "SELECT sid, user_sid, Vin FROM classifieds_listings";
         if (!is_null($userId))
         {
@@ -945,5 +955,5 @@ class dealerCarSearchListingsImport extends listingsImport {
 
 
 $test = new dealerCarSearchListingsImport;
-$test->importFile('../DCS_Autoz4Sell.xml');
+$test->importFile('./Cardealer/DCS_Autoz4Sell.xml');
 //$test->showDataDump();
